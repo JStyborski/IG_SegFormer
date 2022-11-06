@@ -80,25 +80,33 @@ def visualize(attributions, image, clip_above_percentile=99.9, clip_below_percen
 
     return attributions
 
+def draw_red_square(imgArr, centerCoordH, centerCoordW):
+    for i in range(-4, 5):
+        for j in range(-4, 5):
+            imgArr[centerCoordH + i, centerCoordW + j, :] = [0, 0, 255]
+
+    return imgArr
 
 # This function just combines 5 numpy images into a single image - a heuristic way of plotting 5 images as 1
-def generate_entire_images(imgOrig, integGrad1, integGrad1Overlay, integGrad2, integGrad2Overlay, imageNetLabel1, imageNetLabel2):
+def generate_entire_images(imgOrig, tgtPxH1, tgtPxW1, tgtPxH2, tgtPxW2, integGrad1, integGrad1Overlay, integGrad2, integGrad2Overlay, imageNetLabel1, imageNetLabel2):
 
     # Vertical and horizontal white spaces between images
     blank = np.ones((integGrad1.shape[0], 10, 3), dtype=np.uint8) * 128
     blank_hor = np.ones((10, 20 + integGrad1.shape[0] * 3, 3), dtype=np.uint8) * 128
 
     # Rows are concatenations of images and white spaces
-    upper = np.concatenate([imgOrig[:, :, (2, 1, 0)], blank, integGrad1Overlay, blank, integGrad1], 1)
-    middle = np.concatenate([imgOrig[:, :, (2, 1, 0)], blank, integGrad2Overlay, blank, integGrad2], 1)
+    upper = np.concatenate([draw_red_square(imgOrig[:, :, (2, 1, 0)], tgtPxH1, tgtPxW1),
+                            blank, integGrad1Overlay, blank, integGrad1], 1)
+    middle = np.concatenate([draw_red_square(imgOrig[:, :, (2, 1, 0)], tgtPxH2, tgtPxW2),
+                             blank, integGrad2Overlay, blank, integGrad2], 1)
     lower = np.concatenate([imgOrig[:, :, (2, 1, 0)], blank, np.abs(integGrad1Overlay - integGrad2Overlay), blank,
                            np.abs(integGrad1 - integGrad2)], 1)
     total = np.concatenate([upper, blank_hor, middle, blank_hor, lower], 0)
     total = cv2.resize(total, (550, 550))
 
     # Add text
-    cv2.putText(total, 'Class: ' + imageNetLabel1, (0, 173), fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, color=(255,255,255))
-    cv2.putText(total, 'Class: ' + imageNetLabel2, (0, 359), fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, color=(255,255,255))
+    cv2.putText(total, 'Class: ' + imageNetLabel1, (0, 173), fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, color=(0,0,255))
+    cv2.putText(total, 'Class: ' + imageNetLabel2, (0, 359), fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, color=(0,0,255))
     cv2.putText(total, 'Overlay IG', (188, 13), fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, color=(255,255,255))
     cv2.putText(total, 'Pure IG', (375, 13), fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, color=(255,255,255))
     cv2.putText(total, 'Overlay IG Diff', (188, 386), fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, color=(255, 255, 255))
