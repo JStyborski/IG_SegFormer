@@ -18,6 +18,7 @@ def define_class_dicts(filePath):
         id2color[idx] = [int(row[1]), int(row[2]), int(row[3])]
 
     label2id = {v: k for k, v in id2label.items()}
+    color2id = {tuple(v): k for k, v in id2color.items()}
 
-    return id2label, id2color, label2id
+    return id2label, label2id, id2color, color2id
 

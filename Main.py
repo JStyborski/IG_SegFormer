@@ -1,5 +1,5 @@
 import numpy as np
-import cv2
+from PIL import Image
 import os
 from collections import OrderedDict
 
@@ -19,36 +19,36 @@ print('Starting Code')
 
 imgDir = 'sample_images/img'
 imgName = '0016E5_01350.png'
+labelDir = 'sample_images/labels'
+labelName = '0016E5_01350_L.png'
+
 modelCkpt = 'checkpoints/b0_epoch=81-val_mean_iou=0.53.ckpt'
 useCuda = True
-nRandBaselines = 5 # Number of random baselines images, set as None to use zero baseline
-nSteps = 25 # Number of integration steps between baseline and target
+nRandBaselines = None # Number of random baselines images, set as None to use zero baseline
+nSteps = 50 # Number of integration steps between baseline and target
 
 # Target pixel location
-tgtPxH1 = 60
-tgtPxW1 = 200
+tgtPxH1 = 312
+tgtPxW1 = 256
 tgtPxH2 = tgtPxH1
 tgtPxW2 = tgtPxW1
 
 # Choose 'rank' (e.g., best prediction) or 'idx' (pure class label index) for class types
 # Can also choose 'same' for class2Type, which just copies the same target label index as class1 - ignores class2Label
+# 'true' to select get the truth label index from the ground truth segmentation image is implemented, but doesn't
+# work due to a bug in the opencv2 interpolation method. Even using exact nearest neighbor, there is pixel interpolation
+# such that new colors are created
 class1Type = 'rank'
 class1Label = 0
-class2Type = 'rank'
+class2Type = 'true'
 class2Label = 10
 
 ##############
 # Misc Setup #
 ##############
 
-# Output matrix dimensions are 1/4 the size of the input image
-tgtPxH1 = int(tgtPxH1 / 4)
-tgtPxW1 = int(tgtPxW1 / 4)
-tgtPxH2 = int(tgtPxH2 / 4)
-tgtPxW2 = int(tgtPxW2 / 4)
-
 # Function that imports segmentation labels and colors
-id2label, id2color, label2id = define_class_dicts('class_dict.csv')
+id2label, label2id, id2color, color2id = define_class_dicts('class_dict.csv')
 
 # Set processing device: cuda or cpu
 device = torch.device('cuda' if torch.cuda.is_available() and useCuda else 'cpu')
@@ -63,8 +63,14 @@ if not os.path.exists('results/'):
 
 print('Reading Image')
 
-# Read the image as a HxWxRGB numpy array
-imgArr = cv2.imread(os.path.join(imgDir, imgName))
+# Read the image as PIL then convert to a HxWxRGB numpy array and resize to 512x512
+imgPIL = Image.open(os.path.join(imgDir, imgName))
+imgArr = np.array(imgPIL)
+imgArrRS = np.array(imgPIL.resize(size=(512, 512), resample=Image.Resampling.BILINEAR))
+
+# Read the segmentation annotation image as PIL, resize to 512x512, then convert to a HxWxRGB numpy array
+labelArrRS = np.array(Image.open(os.path.join(labelDir, labelName)).resize(size=(512, 512),
+                                                                           resample=Image.Resampling.NEAREST))
 
 ##################
 # Model Creation #
@@ -92,36 +98,37 @@ model.to(device)
 
 print('Getting Target Labels')
 
-# Preprocess (normalize and resize) the input image array and get a PyTorch tensor
-featureExtractor = SegformerFeatureExtractor()
-imgTens = featureExtractor(imgArr, return_tensors='pt')['pixel_values'].to(device)
-imgTens.requires_grad = True
-
-# For the given input image tensor, get the prediction output tensor and convert to numpy
-outputTens = model(pixel_values=imgTens)
-outputTens = outputTens.logits
-outputTens = outputTens.detach().cpu().numpy()
-
 
 def get_target_label_idx(classType, classLabel, tgtPxH, tgtPxW):
+
     if classType == 'rank':
-        tgtLabelIdx = np.argsort(outputTens[0, :, tgtPxH, tgtPxW])[::-1][classLabel]
+        # Need to preprocess and process the whole image to get outputs
+        # Preprocess (normalize and resize) the input image array and get a PyTorch tensor
+        featureExtractor = SegformerFeatureExtractor()
+        imgTens = featureExtractor(imgArr, return_tensors='pt')['pixel_values'].to(device)
+
+        # For the given input image tensor, get the prediction output tensor and convert to numpy
+        outputTens = model(pixel_values=imgTens)
+        outputTens = outputTens.logits.detach().cpu().numpy()
+
+        tgtLabelIdx = np.argsort(outputTens[0, :, int(tgtPxH / 4), int(tgtPxW / 4)])[::-1][classLabel]
     elif classType == 'idx':
         tgtLabelIdx = classLabel
-
+    elif classType == 'true':
+        tgtLabelIdx = color2id[tuple(labelArrRS[tgtPxH, tgtPxW, :])]
 
     return tgtLabelIdx
 
 
 tgtLabelIdx1 = get_target_label_idx(class1Type, class1Label, tgtPxH1, tgtPxW1)
-print('  {} {} Image Label at ({},{}): {} | {}'.format(class1Label, class1Type.upper(), tgtPxH1*4, tgtPxW1*4,
+print('  {} {} Image Label at ({},{}): {} | {}'.format(class1Label, class1Type.upper(), tgtPxH1, tgtPxW1,
                                                        tgtLabelIdx1, id2label[tgtLabelIdx1]))
 
 if class2Type == 'same':
     tgtLabelIdx2 = tgtLabelIdx1
 else:
     tgtLabelIdx2 = get_target_label_idx(class2Type, class2Label, tgtPxH2, tgtPxW2)
-print('  {} {} Image Label at ({},{}): {} | {}'.format(class2Label, class2Type.upper(), tgtPxH2*4, tgtPxW2*4,
+print('  {} {} Image Label at ({},{}): {} | {}'.format(class2Label, class2Type.upper(), tgtPxH2, tgtPxW2,
                                                        tgtLabelIdx2, id2label[tgtLabelIdx2]))
 
 ####################################
@@ -131,13 +138,13 @@ print('  {} {} Image Label at ({},{}): {} | {}'.format(class2Label, class2Type.u
 print('Calculating Label 1 Integrated Gradients')
 
 # Calculate the integrated gradients
-attributions1 = run_baseline_integ_gradients(imgArr, model, tgtLabelIdx1, tgtPxH1, tgtPxW1,
+attributions1 = run_baseline_integ_gradients(imgArr, model, tgtLabelIdx1, int(tgtPxH1 / 4), int(tgtPxW1 / 4),
                                              steps=nSteps, nRandBaselines=nRandBaselines, device=device)
 
 print('Calculating Label 2 Integrated Gradients')
 
 # Calculate the integrated gradients
-attributions2 = run_baseline_integ_gradients(imgArr, model, tgtLabelIdx2, tgtPxH2, tgtPxW2,
+attributions2 = run_baseline_integ_gradients(imgArr, model, tgtLabelIdx2, int(tgtPxH2 / 4), int(tgtPxW2 / 4),
                                              steps=nSteps, nRandBaselines=nRandBaselines, device=device)
 
 #########################
@@ -146,9 +153,9 @@ attributions2 = run_baseline_integ_gradients(imgArr, model, tgtLabelIdx2, tgtPxH
 
 print('Writing Output Images')
 
+# Swap 3xHxW to HxWx3
 attributions1 = np.transpose(attributions1, (1, 2, 0))
 attributions2 = np.transpose(attributions2, (1, 2, 0))
-imgArrRS = cv2.resize(imgArr, dsize=(512, 512), interpolation=cv2.INTER_CUBIC)
 
 # Generate the integrated gradient images while clipping above/below certain percentiles
 imgIntegGradOverlay1 = visualize(attributions1, imgArrRS, clip_above_percentile=99, clip_below_percentile=0, overlay=True)
@@ -159,9 +166,11 @@ imgIntegGradOverlay2 = visualize(attributions2, imgArrRS, clip_above_percentile=
 imgIntegGrad2 = visualize(attributions2, imgArrRS, clip_above_percentile=99, clip_below_percentile=0, overlay=False)
 
 # Combines the original image plus the generated gradients image into one
-outputImg = generate_entire_images(imgArrRS, tgtPxH1*4, tgtPxW1*4, tgtPxH2*4, tgtPxW2*4,
-                                   imgIntegGrad1, imgIntegGradOverlay1, imgIntegGrad2, imgIntegGradOverlay2,
-                                   id2label[tgtLabelIdx1], id2label[tgtLabelIdx2])
-cv2.imwrite('results/asdf2' + imgName, np.uint8(outputImg))
+outputImgArr = generate_entire_images(imgArrRS, tgtPxH1, tgtPxW1, tgtPxH2, tgtPxW2,
+                                      imgIntegGrad1, imgIntegGradOverlay1, imgIntegGrad2, imgIntegGradOverlay2,
+                                      id2label[tgtLabelIdx1], id2label[tgtLabelIdx2])
+
+outputImgPIL = Image.fromarray(outputImgArr.astype(np.uint8))
+outputImgPIL.save('results/' + imgName)
 
 print('Done 8]')

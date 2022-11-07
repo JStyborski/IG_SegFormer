@@ -51,10 +51,10 @@ def compute_threshold_by_top_percentage(attributions, percentile=60):
 
 
 # This function clips the gradient array inputs and outputs them as plottable images
-def visualize(attributions, image, clip_above_percentile=99.9, clip_below_percentile=0, overlay=True):
+def visualize(attributions, imgArr, clip_above_percentile=99.9, clip_below_percentile=0, overlay=True):
 
-    # attributions are the gradients, a 224x224x3 numpy array
-    # image is the original image array, also a 224x224x3 numpy array
+    # attributions are the gradients, a HxWxRGB numpy array
+    # imgArr is the original image array, also a HxWxRGB numpy array
     # clip_above/below_percentile are used to clamp negative and high pixels
 
     # JS Note: To simplify, I removed 9 unused variables
@@ -66,21 +66,24 @@ def visualize(attributions, image, clip_above_percentile=99.9, clip_below_percen
     # Clip gradients to 0-1
     attributions = np.clip(attributions, 0, 1)
     
-    # Convert the attributions to the gray scale (224x224x3 -> 224x224) and clip values above and below the specified
-    # percentile values (linear_transform will rescale to 0,1) and expand back to 224x224x3
+    # Convert the attributions to the gray scale (HxWxRGB -> HxW) and clip values above and below the specified
+    # percentile values (linear_transform will rescale to 0,1) and expand back to HxWx1
     attributions = convert_to_gray_scale(attributions)
     attributions = linear_transform(attributions, clip_above_percentile, clip_below_percentile)
     attributions = np.expand_dims(attributions, 2)
 
     # Method for rescaling the image back to 0-255: use to scale original image or just output on green channel
     if overlay:
-        attributions = np.clip(attributions * image, 0, 255)[:, :, (2, 1, 0)]
+        attributions = np.clip(attributions * imgArr, 0, 255)
     else:
         attributions = attributions * [0, 255, 0]
 
     return attributions
 
-def draw_red_square(imgArr, centerCoordH, centerCoordW):
+def draw_square(imgArr, centerCoordH, centerCoordW):
+
+    # Note that the red is applied in BGR
+
     for i in range(-4, 5):
         for j in range(-4, 5):
             imgArr[centerCoordH + i, centerCoordW + j, :] = [0, 0, 255]
@@ -88,28 +91,38 @@ def draw_red_square(imgArr, centerCoordH, centerCoordW):
     return imgArr
 
 # This function just combines 5 numpy images into a single image - a heuristic way of plotting 5 images as 1
-def generate_entire_images(imgOrig, tgtPxH1, tgtPxW1, tgtPxH2, tgtPxW2, integGrad1, integGrad1Overlay, integGrad2, integGrad2Overlay, imageNetLabel1, imageNetLabel2):
+def generate_entire_images(imgOrigArr, tgtPxH1, tgtPxW1, tgtPxH2, tgtPxW2, integGrad1, integGrad1Overlay, integGrad2, integGrad2Overlay, imageNetLabel1, imageNetLabel2):
+
+    # The rest of the script (Main.py and this one) work with PIL or numpy arrays that are in RGB format, as in the
+    # original SegFormer code. The original IG code works with cv2, which uses BGR. I converted most of the code to
+    # use PIL, arrays, and RGB, but due to a lot of specific code here I just use cv2 and swap to BGR temporarily.
+    imgOrigArr = imgOrigArr[:, :, (2, 1, 0)]
+    integGrad1 = integGrad1[:, :, (2, 1, 0)]
+    integGrad1Overlay = integGrad1Overlay[:, :, (2, 1, 0)]
+    integGrad2 = integGrad2[:, :, (2, 1, 0)]
+    integGrad2Overlay = integGrad2Overlay[:, :, (2, 1, 0)]
 
     # Vertical and horizontal white spaces between images
     blank = np.ones((integGrad1.shape[0], 10, 3), dtype=np.uint8) * 128
     blank_hor = np.ones((10, 20 + integGrad1.shape[0] * 3, 3), dtype=np.uint8) * 128
 
     # Rows are concatenations of images and white spaces
-    upper = np.concatenate([draw_red_square(imgOrig[:, :, (2, 1, 0)], tgtPxH1, tgtPxW1),
-                            blank, integGrad1Overlay, blank, integGrad1], 1)
-    middle = np.concatenate([draw_red_square(imgOrig[:, :, (2, 1, 0)], tgtPxH2, tgtPxW2),
-                             blank, integGrad2Overlay, blank, integGrad2], 1)
-    lower = np.concatenate([imgOrig[:, :, (2, 1, 0)], blank, np.abs(integGrad1Overlay - integGrad2Overlay), blank,
+    upper = np.concatenate([draw_square(imgOrigArr, tgtPxH1, tgtPxW1), blank, integGrad1Overlay, blank, integGrad1], 1)
+    middle = np.concatenate([draw_square(imgOrigArr, tgtPxH2, tgtPxW2), blank, integGrad2Overlay, blank, integGrad2], 1)
+    lower = np.concatenate([imgOrigArr, blank, np.abs(integGrad1Overlay - integGrad2Overlay), blank,
                            np.abs(integGrad1 - integGrad2)], 1)
     total = np.concatenate([upper, blank_hor, middle, blank_hor, lower], 0)
-    total = cv2.resize(total, (550, 550))
+    total = cv2.resize(total, (1000, 1000))
 
     # Add text
-    cv2.putText(total, 'Class: ' + imageNetLabel1, (0, 173), fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, color=(0,0,255))
-    cv2.putText(total, 'Class: ' + imageNetLabel2, (0, 359), fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, color=(0,0,255))
-    cv2.putText(total, 'Overlay IG', (188, 13), fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, color=(255,255,255))
-    cv2.putText(total, 'Pure IG', (375, 13), fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, color=(255,255,255))
-    cv2.putText(total, 'Overlay IG Diff', (188, 386), fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, color=(255, 255, 255))
-    cv2.putText(total, 'Pure IG Diff', (375, 386), fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, color=(255, 255, 255))
+    cv2.putText(total, 'Class: ' + imageNetLabel1, (5, 25), fontFace=cv2.FONT_HERSHEY_DUPLEX, fontScale=1.0, color=(0,0,255))
+    cv2.putText(total, 'Class: ' + imageNetLabel2, (5, 360), fontFace=cv2.FONT_HERSHEY_DUPLEX, fontScale=1.0, color=(0,0,255))
+    cv2.putText(total, 'Overlay IG', (340, 25), fontFace=cv2.FONT_HERSHEY_DUPLEX, fontScale=1.0, color=(0,0,255))
+    cv2.putText(total, 'Pure IG', (675, 25), fontFace=cv2.FONT_HERSHEY_DUPLEX, fontScale=1.0, color=(0,0,255))
+    cv2.putText(total, 'Overlay IG Diff', (340, 700), fontFace=cv2.FONT_HERSHEY_DUPLEX, fontScale=1.0, color=(0,0,255))
+    cv2.putText(total, 'Pure IG Diff', (675, 700), fontFace=cv2.FONT_HERSHEY_DUPLEX, fontScale=1.0, color=(0,0,255))
+
+    # Convert output from BGR to RGB
+    total = total[:, :, (2, 1, 0)]
 
     return total
