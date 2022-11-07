@@ -5,9 +5,9 @@ from collections import OrderedDict
 
 import torch
 
-from transformers import SegformerFeatureExtractor, SegformerForSemanticSegmentation
+from transformers import SegformerForSemanticSegmentation
 
-from Integrated_Gradients import run_baseline_integ_gradients
+from Integrated_Gradients import calculate_outputs, run_baseline_integ_gradients
 from Visualization import visualize, generate_entire_images
 from Define_Class_Dicts import define_class_dicts
 
@@ -24,11 +24,14 @@ labelName = '0016E5_01350_L.png'
 
 modelCkpt = 'checkpoints/b0_epoch=81-val_mean_iou=0.53.ckpt'
 useCuda = True
-nRandBaselines = None # Number of random baselines images, set as None to use zero baseline
-nSteps = 50 # Number of integration steps between baseline and target
+
+# Number of random baselines images and the number of steps between baseline and target
+# Set nRandBaselines as 'zero' to use the zero baseline, set as 'scale' to use scaled gradients (not integ gradients)
+nRandBaselines = 'scale'
+nSteps = 20
 
 # Target pixel location
-tgtPxH1 = 312
+tgtPxH1 = 170
 tgtPxW1 = 256
 tgtPxH2 = tgtPxH1
 tgtPxW2 = tgtPxW1
@@ -38,14 +41,19 @@ tgtPxW2 = tgtPxW1
 # 'true' to select get the truth label index from the ground truth segmentation image is implemented, but doesn't
 # work due to a bug in the opencv2 interpolation method. Even using exact nearest neighbor, there is pixel interpolation
 # such that new colors are created
-class1Type = 'rank'
+class1Type = 'true'
 class1Label = 0
-class2Type = 'true'
+class2Type = 'rank'
 class2Label = 10
 
 ##############
 # Misc Setup #
 ##############
+
+if class1Type == 'same' or class1Type == 'true':
+    class1Label = '-'
+if class2Type == 'same' or class2Type == 'true':
+    class2Label = '-'
 
 # Function that imports segmentation labels and colors
 id2label, label2id, id2color, color2id = define_class_dicts('class_dict.csv')
@@ -101,19 +109,21 @@ print('Getting Target Labels')
 
 def get_target_label_idx(classType, classLabel, tgtPxH, tgtPxW):
 
+    # Look at output and get class index by rank
     if classType == 'rank':
-        # Need to preprocess and process the whole image to get outputs
-        # Preprocess (normalize and resize) the input image array and get a PyTorch tensor
-        featureExtractor = SegformerFeatureExtractor()
-        imgTens = featureExtractor(imgArr, return_tensors='pt')['pixel_values'].to(device)
 
-        # For the given input image tensor, get the prediction output tensor and convert to numpy
-        outputTens = model(pixel_values=imgTens)
-        outputTens = outputTens.logits.detach().cpu().numpy()
+        # Get image input tensor and resulting output tensor
+        _, outputTens = calculate_outputs(imgArr, model, device)
+        outputTens = outputTens.detach().cpu().numpy()
 
+        # Calculate the target label index by looking at the classes of a certain pixel
         tgtLabelIdx = np.argsort(outputTens[0, :, int(tgtPxH / 4), int(tgtPxW / 4)])[::-1][classLabel]
+
+    # Just get the label index from input
     elif classType == 'idx':
         tgtLabelIdx = classLabel
+
+    # Load the truth image and get the corresponding value from there
     elif classType == 'true':
         tgtLabelIdx = color2id[tuple(labelArrRS[tgtPxH, tgtPxW, :])]
 

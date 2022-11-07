@@ -8,17 +8,25 @@ from transformers import SegformerFeatureExtractor
 # reduce_labels is not included (such that it defaults to False) - Unlike ADE20k, we don't have a background label
 featureExtractor = SegformerFeatureExtractor()
 
+# Given the input image array, convert it to a PyTorch tensor and push it through the model, get the output logits
+def calculate_outputs(imgArr, model, device):
+
+    # Get the tensor (1x3xHxW) output from the SegFormer preprocessor
+    imgTens = featureExtractor(imgArr, return_tensors='pt')['pixel_values'].to(device)
+    imgTens.requires_grad = True
+
+    # Evaluate the model and get classifier outputs
+    outputTens = model(pixel_values=imgTens)
+    outputTens = outputTens.logits
+
+    return imgTens, outputTens
+
 
 # Between a baseline image and the target image, calculate the intermediate gradient values and discretely integrate
 def integ_gradients(imgArr, model, targetLabelIdx, targetPxH, targetPxW, baseline, steps, device):
 
-    # imgArr is a  numpy array (HxWxRGB) representing a PIL image
-    # model is the pytorch model
-    # targetLabelIdx is the index from which to calculate gradients
-    # targetPxH and targetPxW are the target pixel height and width indices
+    # Other inputs covered in run_baseline_integ_gradients
     # baseline is the baseline image numpy array, same size as imgArr
-    # steps is the number of linearly interpolated images to calculate between baseline and imgArr
-    # device is the torch.device
 
     # This is a list of the image arrays representing the steps along a linear path between baseline and input images
     imgDelta = imgArr - baseline
@@ -29,13 +37,8 @@ def integ_gradients(imgArr, model, targetLabelIdx, targetPxH, targetPxW, baselin
     gradsArrList = []
     for scaledInp in scaledInpList:
 
-        # Get the tensor (1x3xHxW) output from the SegFormer preprocessor
-        imgTens = featureExtractor(scaledInp, return_tensors='pt')['pixel_values'].to(device)
-        imgTens.requires_grad = True
-
-        # Evaluate the model and get classifier outputs
-        outputTens = model(pixel_values=imgTens)
-        outputTens = outputTens.logits
+        # Get the input image tensor and calculate the output tensor through the model
+        imgTens, outputTens = calculate_outputs(scaledInp, model, device)
 
         # Gathers the result at the given targetLabelIdx and pixel location
         outputTens = outputTens[0, targetLabelIdx, targetPxH, targetPxW]
@@ -85,15 +88,31 @@ def run_baseline_integ_gradients(imgArr, model, targetLabelIdx, targetPxH, targe
     allIntegGradsList = []
 
     # Run integrated gradients with a random baseline image and accumulate the results in allIntegGradsList
-    # If no baseline specified, use 0's array as baseline, else run with n baselines
-    if nRandBaselines is None:
+    # If 'scale', just regular gradients and scale them, if 'zero', use 0s array as baseline, else run with n baselines
+    if nRandBaselines == 'scale':
+        print('  Scaled Gradients')
+
+        # This is essentially the chunk of code out of integrated_gradients, but only for one input (no integration)
+        imgTens, outputTens = calculate_outputs(imgArr, model, device)
+        outputTens = outputTens[0, targetLabelIdx, targetPxH, targetPxW]
+        model.zero_grad()
+        outputTens.backward()
+        gradsArr = imgTens.grad.detach().cpu().numpy().squeeze()
+        prepImgArr = featureExtractor(imgArr, return_tensors='np')['pixel_values'].squeeze()
+
+        # Scale the single image gradients by the image
+        integGrad = gradsArr * prepImgArr
+        allIntegGradsList.append(integGrad)
+
+    elif nRandBaselines == 'zero':
         print('  Zero Baseline')
         integGrad = integ_gradients(imgArr, model, targetLabelIdx, targetPxH, targetPxW,
                                     baseline=0.0 * imgArr, steps=steps, device=device)
         allIntegGradsList.append(integGrad)
+
     else:
         for i in range(nRandBaselines):
-            print('  Random Baseline {}'.format(i))
+            print('  Random Baseline {}'.format(i + 1))
             integGrad = integ_gradients(imgArr, model, targetLabelIdx, targetPxH, targetPxW,
                                         baseline=255.0 * np.random.random(imgArr.shape), steps=steps, device=device)
             allIntegGradsList.append(integGrad)
