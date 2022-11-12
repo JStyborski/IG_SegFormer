@@ -76,7 +76,7 @@ def visualize(attributions, imgArr, clip_above_percentile=99.9, clip_below_perce
     if overlay:
         attributions = np.clip(attributions * imgArr, 0, 255)
     else:
-        attributions = attributions * [0, 255, 0]
+        attributions = attributions * [255, 255, 255]
 
     return attributions
 
@@ -97,6 +97,7 @@ def generate_entire_images(imgOrigArr, tgtPxH1, tgtPxW1, tgtPxH2, tgtPxW2, integ
     # original SegFormer code. The original IG code works with cv2, which uses BGR. I converted most of the code to
     # use PIL, arrays, and RGB, but due to a lot of specific code here I just use cv2 and swap to BGR temporarily.
     imgOrigArr = imgOrigArr[:, :, (2, 1, 0)]
+    imgOrigArr2 = imgOrigArr.copy()
     integGrad1 = integGrad1[:, :, (2, 1, 0)]
     integGrad1Overlay = integGrad1Overlay[:, :, (2, 1, 0)]
     integGrad2 = integGrad2[:, :, (2, 1, 0)]
@@ -108,7 +109,7 @@ def generate_entire_images(imgOrigArr, tgtPxH1, tgtPxW1, tgtPxH2, tgtPxW2, integ
 
     # Rows are concatenations of images and white spaces
     upper = np.concatenate([draw_square(imgOrigArr, tgtPxH1, tgtPxW1), blank, integGrad1Overlay, blank, integGrad1], 1)
-    middle = np.concatenate([draw_square(imgOrigArr, tgtPxH2, tgtPxW2), blank, integGrad2Overlay, blank, integGrad2], 1)
+    middle = np.concatenate([draw_square(imgOrigArr2, tgtPxH2, tgtPxW2), blank, integGrad2Overlay, blank, integGrad2], 1)
     lower = np.concatenate([imgOrigArr, blank, np.abs(integGrad1Overlay - integGrad2Overlay), blank,
                            np.abs(integGrad1 - integGrad2)], 1)
     total = np.concatenate([upper, blank_hor, middle, blank_hor, lower], 0)

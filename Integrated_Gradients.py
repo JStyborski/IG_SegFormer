@@ -89,7 +89,7 @@ def run_baseline_integ_gradients(imgArr, model, targetLabelIdx, targetPxH, targe
 
     # Run integrated gradients with a random baseline image and accumulate the results in allIntegGradsList
     # If 'scale', just regular gradients and scale them, if 'zero', use 0s array as baseline, else run with n baselines
-    if nRandBaselines == 'scale':
+    if nRandBaselines == 'grad':
         print('  Scaled Gradients')
 
         # This is essentially the chunk of code out of integrated_gradients, but only for one input (no integration)
