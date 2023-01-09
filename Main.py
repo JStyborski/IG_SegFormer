@@ -18,23 +18,29 @@ from Define_Class_Dicts import define_class_dicts
 print('Starting Code')
 
 imgDir = 'sample_images/img'
-imgName = '0016E5_01350.png'
+imgName = '0006R0_f03480.png'
 labelDir = 'sample_images/labels'
-labelName = '0016E5_01350_L.png'
+labelName = '0006R0_f03480_L.png'
 
 modelCkpt = 'checkpoints/b5_epoch=90-val_mean_iou=0.66.ckpt'
 useCuda = True
 
 # Number of random baselines images and the number of steps between baseline and target
 # Set nRandBaselines as 'zero' to use the black baseline, set as 'grad' to use scaled gradients (not integ gradients)
-nRandBaselines = 'grad'
+nRandBaselines = 5
 nSteps = 20
 
 # Target pixel location (relative to the resized 512x512 image)
-tgtPxH1 = 310
-tgtPxW1 = 256
-tgtPxH2 = 160
-tgtPxW2 = 420
+tgtPxH1 = 276
+tgtPxW1 = 120
+tgtPxH2 = tgtPxH1
+tgtPxW2 = tgtPxW1
+
+# Truth and predicted
+# 200: RoadShoulder and Road
+# 201: LaneMkgsNonDriv and Road
+# 202 and 203: Void and Road
+# 204: Road and Road
 
 # Choose 'rank' (e.g., best prediction) or 'idx' (pure class label index) for class types
 # Can also choose 'same' for class2Type, which just copies the same target label index as class1 - ignores class2Label
@@ -43,7 +49,7 @@ tgtPxW2 = 420
 # such that new colors are created
 class1Type = 'true'
 class1Label = 0
-class2Type = 'true'
+class2Type = 'rank'
 class2Label = 0
 
 ##############
@@ -181,7 +187,7 @@ outputImgArr = generate_entire_images(imgArrRS, tgtPxH1, tgtPxW1, tgtPxH2, tgtPx
                                       id2label[tgtLabelIdx1], id2label[tgtLabelIdx2])
 
 outputImgPIL = Image.fromarray(outputImgArr.astype(np.uint8))
-outputImgPIL.save('results/IG_' + str(nRandBaselines) + '_' + id2label[tgtLabelIdx1] + '_' + id2label[tgtLabelIdx2]
-                  + '_' + imgName)
+outputImgPIL.save('results/' + imgName.split('.')[0] + '_' + str(nRandBaselines) + '_' + id2label[tgtLabelIdx1]
+                  + '_' + id2label[tgtLabelIdx2] + '_.' + imgName.split('.')[1])
 
 print('Done 8]')
